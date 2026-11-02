@@ -1,0 +1,29 @@
+---
+namespace: danielhreben
+name: remote_access
+version: 0.1.0
+readme: README.md
+authors:
+  - Daniel Hreben (@DanielHreben)
+description: >-
+  Declarative Twingate resources and Tailscale policy files, kept equal to what
+  your playbook says through each service's admin API.
+license:
+  - GPL-3.0-or-later
+tags:
+  - twingate
+  - tailscale
+  - networking
+  - vpn
+  - zerotrust
+  - security
+dependencies: {}
+repository: https://github.com/DanielHreben/ansible-collection-remote-access
+documentation: https://github.com/DanielHreben/ansible-collection-remote-access#readme
+homepage: https://github.com/DanielHreben/ansible-collection-remote-access
+issues: https://github.com/DanielHreben/ansible-collection-remote-access/issues
+build_ignore:
+  - .github
+  - .gitignore
+  - tests/output
+  - '*.tar.gz'
