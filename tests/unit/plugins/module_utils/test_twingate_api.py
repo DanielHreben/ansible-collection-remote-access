@@ -51,7 +51,8 @@ class FakeTwingate:
         req = json.loads(data) if data else {}
         self.requests.append(dict(url=url, method=method, headers=headers or {}, **req))
         if self.raw:
-            status, body = self.raw  # pylint: disable=unpacking-non-sequence  (older pylint ignores the guard)
+            # Older pylint (ansible-core 2.19) ignores the guard above.
+            status, body = self.raw  # pylint: disable=unpacking-non-sequence
             if status == 200:
                 return _Resp(body.encode(), url), {"status": status, "url": url}
             # Like fetch_url: the HTTPError, already read, with the body in info.
