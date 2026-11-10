@@ -51,7 +51,7 @@ class FakeTwingate:
         req = json.loads(data) if data else {}
         self.requests.append(dict(url=url, method=method, headers=headers or {}, **req))
         if self.raw:
-            status, body = self.raw
+            status, body = self.raw  # pylint: disable=unpacking-non-sequence  (older pylint ignores the guard)
             if status == 200:
                 return _Resp(body.encode(), url), {"status": status, "url": url}
             # Like fetch_url: the HTTPError, already read, with the body in info.
