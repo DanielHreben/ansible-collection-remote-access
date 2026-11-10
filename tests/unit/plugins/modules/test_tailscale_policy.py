@@ -127,6 +127,19 @@ def test_412_on_upload_is_reported(run_module, tailnet):
     assert r["failed"] and "nothing was uploaded" in r["msg"]
 
 
+def test_invalid_policy_answered_with_400_is_reported(run_module, tailnet):
+    tailnet.route("POST", ACL + "/validate", (400, {}, {"message": "line 3: unexpected token"}))
+    r = run(run_module, content=POLICY, api_key="tskey-api-x", check=True)
+    assert r["failed"] and "line 3: unexpected token" in r["msg"]
+    assert tailnet.find("POST", ACL) == []
+
+
+def test_upload_error_body_is_reported(run_module, tailnet):
+    tailnet.route("POST", ACL, (400, {}, {"message": "acls: bad src"}))
+    r = run(run_module, content=POLICY, api_key="tskey-api-x")
+    assert r["failed"] and "acls: bad src" in r["msg"]
+
+
 def test_validation_failure_is_reported(run_module, tailnet):
     tailnet.route("POST", ACL + "/validate",
                   (200, {}, {"message": "test(s) failed", "data": [{"user": "a@example.com", "errors": ["denied"]}]}))

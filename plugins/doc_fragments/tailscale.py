@@ -49,6 +49,6 @@ notes:
     C(localhost)).
   - Requests answered with HTTP 429 are retried, waiting as long as the API asks
     (at most 120 seconds, at most 5 tries). Reads are also retried on HTTP 502,
-    503 and 504 and on connection errors. An upload is never retried after a
-    server error, since it may have been applied.
+    503 and 504, and once after a connection error. An upload is never retried
+    after a server error, since it may have been applied.
 """

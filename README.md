@@ -107,12 +107,14 @@ Groups and their members, users, connectors, remote networks, security policies 
 service accounts stay in the console. So do these resource settings, which a new
 resource gets from Twingate's defaults: security policy, tags, approval mode, routing
 mode, access policy, active state and per-group access settings. Kubernetes, SSH and
-web app resources are ignored.
+web app resources are ignored, and listing a name that belongs to one of them is an
+error.
 
-> **Status (0.1.0):** reading, comparing, exporting and deleting have run against a live
+> **Status (0.1.0):** reading, comparing and exporting have been checked against a live
 > Twingate network. Creating and updating resources have been tested against faked API
-> answers only, checked against the mutations Twingate's own tools send. Run a change in
-> check mode first, and please [open an issue](https://github.com/DanielHreben/ansible-collection-remote-access/issues)
+> answers only, with every query and mutation validated against Twingate's published
+> GraphQL schema. Run a change in check mode first, and please
+> [open an issue](https://github.com/DanielHreben/ansible-collection-remote-access/issues)
 > if one fails.
 
 ## Tailscale
@@ -165,9 +167,13 @@ The Tailscale names are the ones Tailscale's Terraform provider reads.
 ## Rate limits and retries
 
 A request answered with HTTP 429 is retried after the wait the API asks for (at most
-120 seconds, at most 5 tries). Reads are also retried on HTTP 502, 503 and 504 and on
-connection errors. A change is never retried after a server error, since it may have
-been applied; if one fails partway, the error says which changes were already made.
+120 seconds, at most 5 tries). Reads are also retried on HTTP 502, 503 and 504, and once
+after a connection error. A change is never retried after a server error, since it may
+have been applied. If a series of Twingate changes fails partway, the error lists what
+was done, what failed (or may or may not have been applied), and what was not tried.
+
+The Twingate API key is sent only to your network's own host: the lookup of a regional
+host does not pass it on to wherever that host redirects.
 
 ## Development
 

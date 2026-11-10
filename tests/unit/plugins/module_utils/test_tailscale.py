@@ -126,6 +126,19 @@ class TestValidateAnswer:
             tp.raise_for_validation({"message": "bad json"})
 
 
+def test_connect_masks_the_exchanged_token():
+    class Module:
+        params = {"api_key": "tskey-client-s", "oauth_client_id": "cid", "tailnet": "-",
+                  "api_url": "https://api.example.com", "timeout": 30}
+        no_log_values = set()
+
+    import json as _json
+    from unittest import mock
+    with mock.patch.object(tp.TailscaleApi, "post_form", lambda self, path, form: _json.dumps({"access_token": "tok"})):
+        api = tp.connect(Module)
+    assert api.token == "tok" and "tok" in Module.no_log_values
+
+
 class TestToken:
     def test_api_key_is_used_as_is(self):
         assert tp.bearer_token("tskey-api-abc", None, post_form=None) == "tskey-api-abc"

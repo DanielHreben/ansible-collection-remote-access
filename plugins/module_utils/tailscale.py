@@ -164,4 +164,6 @@ def connect(module):
     p = module.params
     api = TailscaleApi(module, p["api_url"], p["tailnet"])
     api.token = bearer_token(p["api_key"], p["oauth_client_id"], api.post_form)
+    if api.token != p["api_key"]:  # an exchanged OAuth token: keep it out of any output
+        module.no_log_values.add(api.token)
     return api

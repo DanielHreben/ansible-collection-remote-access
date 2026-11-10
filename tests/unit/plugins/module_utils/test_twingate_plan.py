@@ -127,10 +127,12 @@ class TestPlan:
         assert "alias" not in v
         assert r["after"]["new.example.com"] == {"name": "new.example.com", "tcp": [22], "groups": ["Contractors"]}
 
-    def test_no_ports_written_as_deny_all(self):
+    def test_no_ports_written_as_restricted_with_no_ports(self):
+        # The API's ProtocolPolicy has only ALLOW_ALL and RESTRICTED; RESTRICTED
+        # with no ports allows none.
         r = plan([WIKI, OLD, {"name": "new.example.com", "tcp": "all", "groups": []}])
         p = r["ops"][0][1]["protocols"]
-        assert p["udp"] == {"policy": "DENY_ALL", "ports": []}
+        assert p["udp"] == {"policy": "RESTRICTED", "ports": []}
         assert p["tcp"] == {"policy": "ALLOW_ALL", "ports": []}
         assert p["allowIcmp"] is False
 
@@ -196,6 +198,13 @@ class TestPlan:
         with pytest.raises(tg.TwingateError, match="wiki.example.com: no remote_network"):
             plan([WIKI], default=None)
         assert plan([dict(WIKI, remote_network="Office")], default=None)["ops"] == []
+
+    def test_name_of_another_resource_type_fails(self):
+        st = state(node("wiki.example.com"))
+        st["others"] = {"cluster.example.com": "KubernetesResource"}
+        with pytest.raises(tg.TwingateError, match="cluster.example.com is a KubernetesResource"):
+            plan([WIKI, {"name": "cluster.example.com", "tcp": [443]}], st=st)
+        assert plan([WIKI], st=st)["ops"] == []
 
     def test_service_account_access_is_left_alone(self):
         n = node("wiki.example.com")

@@ -17,11 +17,14 @@ URL = "https://example.twingate.com/api/graphql/"
 
 
 class _Resp:
-    def __init__(self, body):
-        self.body = body
+    def __init__(self, body, url=None):
+        self.body, self.url = body, url
 
     def read(self):
         return self.body
+
+    def geturl(self):
+        return self.url
 
 
 def _page(items, first, after):
@@ -49,8 +52,10 @@ class FakeTwingate:
         self.requests.append(dict(url=url, method=method, headers=headers or {}, **req))
         if self.raw:
             status, body = self.raw
-            return (_Resp(body.encode()), {"status": status, "url": url}) if status == 200 else \
-                (None, {"status": status, "url": url, "body": body.encode()})
+            if status == 200:
+                return _Resp(body.encode(), url), {"status": status, "url": url}
+            # Like fetch_url: the HTTPError, already read, with the body in info.
+            return _Resp(b"", url), {"status": status, "url": url, "body": body.encode()}
         q, v = req["query"], req["variables"]
         first, after = v.get("first"), v.get("after")
         if q.lstrip().startswith("mutation"):
@@ -66,13 +71,13 @@ class FakeTwingate:
             nodes = []
             for r in self.resources:
                 if r["__typename"] != "NetworkResource":
-                    nodes.append({"__typename": r["__typename"]})
+                    nodes.append({"__typename": r["__typename"], "id": r["id"], "name": r["name"]})
                     continue
                 n = {k: x for k, x in r.items() if k != "_access"}
                 n["access"] = _page(r["_access"], first, None)
                 nodes.append(n)
             data = {"resources": _page(nodes, first, after)}
-        return _Resp(json.dumps({"data": data}).encode()), {"status": 200, "url": url}
+        return _Resp(json.dumps({"data": data}).encode(), url), {"status": 200, "url": url}
 
 
 def resource(name, groups=("Engineering",), extra_access=()):
@@ -81,7 +86,7 @@ def resource(name, groups=("Engineering",), extra_access=()):
             "isVisible": True, "isBrowserShortcutEnabled": False, "address": {"value": name},
             "remoteNetwork": {"id": "N-Office", "name": "Office"},
             "protocols": {"allowIcmp": False, "tcp": {"policy": "RESTRICTED", "ports": [{"start": 443, "end": 443}]},
-                          "udp": {"policy": "DENY_ALL", "ports": []}},
+                          "udp": {"policy": "RESTRICTED", "ports": []}},
             "_access": access}
 
 
@@ -130,10 +135,12 @@ def test_fetches_remaining_access_entries_for_a_resource(module, fake):
     assert more["variables"] == {"id": "R-wiki.example.com", "first": 50, "after": "50"}
 
 
-def test_skips_non_network_resources(module, fake):
-    fake.resources = [resource("wiki.example.com"), {"__typename": "KubernetesResource", "_access": []}]
+def test_skips_non_network_resources_but_keeps_their_names(module, fake):
+    fake.resources = [resource("wiki.example.com"),
+                      {"__typename": "KubernetesResource", "id": "K-1", "name": "cluster", "_access": []}]
     st = api(module).read_state()
     assert [r["name"] for r in st["resources"]] == ["wiki.example.com"]
+    assert st["others"] == {"cluster": "KubernetesResource"}
 
 
 def test_resources_query_selects_network_resources(module, fake):
@@ -159,6 +166,12 @@ def test_sends_the_api_key(module, fake):
 def test_graphql_errors_become_TwingateError(module, fake):
     fake.raw = (200, json.dumps({"errors": [{"message": "bad field"}, {"message": "worse"}]}))
     with pytest.raises(tg.TwingateError, match="bad field; worse"):
+        api(module).read_state()
+
+
+def test_graphql_errors_in_a_400_are_reported(module, fake):
+    fake.raw = (400, json.dumps({"errors": [{"message": "Variable '$protocols' has an invalid value"}]}))
+    with pytest.raises(tg.TwingateError, match="invalid value"):
         api(module).read_state()
 
 
@@ -198,42 +211,79 @@ def test_variable_declarations_are_strict(module, fake):
     assert fake.requests[1]["variables"]["alias"] is None
 
 
-def test_mutations_are_not_retried_on_5xx(module, fake, monkeypatch):
+def test_mutations_are_not_retried_on_5xx_and_their_outcome_is_unknown(module, fake, monkeypatch):
     monkeypatch.setattr(http_client.time, "sleep", lambda s: None)
     fake.raw = (503, "busy")
-    with pytest.raises(tg.TwingateError, match="HTTP 503"):
+    with pytest.raises(tg.TwingateError, match="HTTP 503") as e:
         api(module).apply("delete", {"id": "R"})
     assert len(fake.requests) == 1
+    assert e.value.unknown is True
+
+
+def test_a_refused_mutation_is_known_not_applied(module, fake):
+    fake.mutation_answer = {"ok": False, "error": "nope"}
+    with pytest.raises(tg.TwingateError) as e:
+        api(module).apply("delete", {"id": "R"})
+    assert e.value.unknown is False
+
+
+def test_a_failed_read_is_not_marked_unknown(module, fake):
+    fake.raw = (401, "denied")
+    with pytest.raises(tg.TwingateError) as e:
+        api(module).read_state()
+    assert e.value.unknown is False
 
 
 class TestResolve:
-    def run(self, module, info):
+    def run(self, module, status, final, network="acme"):
+        """fetch_url reports the final URL through the response object; on an
+        HTTP error its info["url"] is still the request URL."""
         calls = []
 
         def fetch(module, url, **kw):
             calls.append(dict(url=url, **kw))
-            return None, dict(info, body=b"")
+            if status == -1:
+                return None, {"status": -1, "url": url, "msg": "no route"}
+            if status == 200:
+                return _Resp(b"", final), {"status": 200, "url": final}
+            return _Resp(b"", final), {"status": status, "url": url, "body": b""}
 
         with mock.patch.object(http_client, "fetch_url", fetch):
-            return tg.resolve_api_url(module, "acme", "k"), calls
+            return tg.resolve_api_url(module, network, "k"), calls
 
     def test_uses_the_regional_host(self, module):
-        url, calls = self.run(module, {"status": 200, "url": "https://acme.eu1.twingate.com/login"})
+        url, calls = self.run(module, 200, "https://acme.eu1.twingate.com/login")
         assert url == "https://acme.eu1.twingate.com/api/graphql/"
         assert calls[0]["url"] == "https://acme.twingate.com"
         assert calls[0]["headers"]["X-API-KEY"] == "k"
 
+    def test_key_is_not_sent_on_to_redirect_targets(self, module):
+        url, calls = self.run(module, 200, "https://acme.twingate.com/")
+        assert calls[0]["unredirected_headers"] == ["X-API-KEY"]
+
+    def test_uses_the_regional_host_even_when_it_answers_with_an_error(self, module):
+        url, calls = self.run(module, 401, "https://acme.eu1.twingate.com/")
+        assert url == "https://acme.eu1.twingate.com/api/graphql/"
+
+    def test_network_name_case_does_not_matter(self, module):
+        url, calls = self.run(module, 200, "https://acme.eu1.twingate.com/", network="Acme")
+        assert url == "https://acme.eu1.twingate.com/api/graphql/"
+        assert calls[0]["url"] == "https://acme.twingate.com"
+
+    def test_lookup_is_not_retried(self, module):
+        url, calls = self.run(module, -1, None)
+        assert len(calls) == 1
+
     def test_no_redirect_keeps_the_network_host(self, module):
-        url, calls = self.run(module, {"status": 200, "url": "https://acme.twingate.com/"})
+        url, calls = self.run(module, 200, "https://acme.twingate.com/")
         assert url == "https://acme.twingate.com/api/graphql/"
 
     @pytest.mark.parametrize("final", ["https://auth.twingate.com/login", "https://acme.evil.example/",
                                        "http://acme.eu1.twingate.com/", "https://acmex.twingate.com/"])
     def test_ignores_a_host_that_is_not_this_networks(self, module, final):
-        url, calls = self.run(module, {"status": 200, "url": final})
+        url, calls = self.run(module, 200, final)
         assert url == "https://acme.twingate.com/api/graphql/"
 
-    def test_falls_back_on_error(self, module, monkeypatch):
-        monkeypatch.setattr(http_client.time, "sleep", lambda s: None)
-        url, calls = self.run(module, {"status": -1, "msg": "no route", "url": "https://acme.twingate.com"})
+    def test_falls_back_on_error(self, module):
+        url, calls = self.run(module, -1, None)
         assert url == "https://acme.twingate.com/api/graphql/"

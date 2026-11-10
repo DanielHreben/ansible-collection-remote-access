@@ -26,11 +26,14 @@ description:
     mode, access policy, active state and per-group access settings). A new
     resource gets Twingate's defaults for them.
   - Only network resources are handled. Kubernetes, SSH and web app resources
-    are ignored entirely.
+    are ignored, and listing a name that belongs to one of them is an error.
+  - If a change fails partway, the error lists the changes already made, the
+    one that failed (or whose outcome is unknown, after a server error or a
+    lost connection), and those not attempted.
   - B(As of 0.1.0, creating and updating resources has been tested against
-    faked API answers only), checked against the mutations Twingate's own tools
-    send. Reading, comparing and deleting have run against a live network.
-    Try a change in check mode first.
+    faked API answers only), with every query and mutation validated against
+    Twingate's published GraphQL schema. Reading, comparing and exporting have
+    been checked against a live network. Try a change in check mode first.
 extends_documentation_fragment:
   - danielhreben.remote_access.twingate
   - ansible.builtin.action_common_attributes

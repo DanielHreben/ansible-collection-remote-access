@@ -38,6 +38,7 @@ def api(monkeypatch):
         last = None
         resolved = []
         fail_on = None
+        unknown = False
 
         def __init__(self, module, url, key):
             self.url, self.key, self.calls = url, key, []
@@ -49,7 +50,7 @@ def api(monkeypatch):
         def apply(self, op, variables):
             self.calls.append((op, variables))
             if len(self.calls) == FakeApi.fail_on:
-                raise tg.TwingateError("resourceUpdate wiki.example.com: boom")
+                raise tg.TwingateError("resourceUpdate wiki.example.com: boom", unknown=FakeApi.unknown)
 
     def resolve(module, network, key):
         FakeApi.resolved.append((network, key))
@@ -95,7 +96,16 @@ def test_partial_apply_failure_lists_what_was_done(run_module, api):
     assert r["failed"]
     assert "boom" in r["msg"]
     assert "Done before the failure: created new.example.com." in r["msg"]
-    assert "Not done: updated wiki.example.com, deleted old.example.com." in r["msg"]
+    assert "Failed: updated wiki.example.com." in r["msg"]
+    assert "Not done: deleted old.example.com." in r["msg"]
+
+
+def test_partial_apply_with_an_unknown_outcome_says_so(run_module, api):
+    api.fail_on, api.unknown = 2, True
+    r = run(run_module, resources=[NEW, dict(WIKI, tcp=[8443])], prune=True)
+    assert r["failed"]
+    assert "Outcome unknown (check the console): updated wiki.example.com." in r["msg"]
+    assert "Not done: deleted old.example.com." in r["msg"]
 
 
 def test_fingerprint_round_trip(run_module, api):

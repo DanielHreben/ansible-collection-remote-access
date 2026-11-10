@@ -23,11 +23,14 @@ class _Exit(Exception):
 
 
 class _Resp:
-    def __init__(self, body):
-        self.body = body
+    def __init__(self, body, url):
+        self.body, self.url = body, url
 
     def read(self):
         return self.body
+
+    def geturl(self):
+        return self.url
 
 
 class FakeHttp:
@@ -57,9 +60,10 @@ class FakeHttp:
         body = body.encode() if isinstance(body, str) else body
         info = dict(hdrs, status=status, url=hdrs.get("url", url))
         if 200 <= status < 300:
-            return _Resp(body), info
+            return _Resp(body, info["url"]), info
+        # Like fetch_url: the HTTPError, already read, with the body in info.
         info["body"] = body
-        return None, info
+        return _Resp(b"", info["url"]), info
 
     def find(self, method, path):
         return [r for r in self.requests if r["method"] == method and r["path"] == path]

@@ -33,7 +33,12 @@ FIELDS = ("address", "alias", "remote_network", "tcp", "udp", "icmp", "visible",
 
 
 class TwingateError(Exception):
-    pass
+    """A problem to report. ``unknown`` marks a change that may or may not have
+    been applied (a server error or a lost connection during a write)."""
+
+    def __init__(self, msg, unknown=False):
+        super().__init__(msg)
+        self.unknown = unknown
 
 
 # --- Normalising -------------------------------------------------------------
@@ -154,8 +159,8 @@ def _protocols(full):
     def one(v):
         if v == "all":
             return {"policy": "ALLOW_ALL", "ports": []}
-        if not v:
-            return {"policy": "DENY_ALL", "ports": []}
+        if not v:  # the API has no DENY_ALL: RESTRICTED with no ports allows none
+            return {"policy": "RESTRICTED", "ports": []}
         return {"policy": "RESTRICTED", "ports": [{"start": a, "end": b} for a, b in v]}
     return {"allowIcmp": full["icmp"], "tcp": one(full["tcp"]), "udp": one(full["udp"])}
 
@@ -174,6 +179,7 @@ def plan(state, desired, default_remote_network, prune):
     "networks": {name: [id, ...]}}``. Raises TwingateError, before anything is
     planned, for any problem in ``desired`` or an ambiguity in the console."""
     nodes = state["resources"]
+    others = state.get("others") or {}
     names = [n["name"] for n in nodes]
     duplicates = sorted({x for x in names if names.count(x) > 1})
     if duplicates:
@@ -189,6 +195,9 @@ def plan(state, desired, default_remote_network, prune):
         full = normalize(spec, default_remote_network)
         if full["name"] in want:
             raise TwingateError(f"{full['name']} is listed twice")
+        if full["name"] in others and full["name"] not in names:
+            raise TwingateError(f"{full['name']} is a {others[full['name']]} in Twingate; this module manages "
+                                "network resources only")
         want[full["name"]] = full
 
     network_id, group_id = {}, {}
@@ -266,8 +275,8 @@ _NETWORKS = "query($first: Int!, $after: String) { remoteNetworks(first: $first,
 _GROUPS = "query($first: Int!, $after: String) { groups(first: $first, after: $after) { %s edges { node { id name } } } }" % _PAGE_INFO
 _RESOURCES = (
     "query($first: Int!, $after: String) { resources(first: $first, after: $after) { %s edges { node {"
-    " __typename ... on NetworkResource {"
-    " id name alias isVisible isBrowserShortcutEnabled address { value } remoteNetwork { id name }"
+    " __typename id name ... on NetworkResource {"
+    " alias isVisible isBrowserShortcutEnabled address { value } remoteNetwork { id name }"
     " protocols { allowIcmp tcp { policy ports { start end } } udp { policy ports { start end } } }"
     " access(first: $first) { %s %s } } } } } }" % (_PAGE_INFO, _PAGE_INFO, _GROUP_PRINCIPAL))
 _MORE_ACCESS = (
@@ -290,13 +299,18 @@ def resolve_api_url(module, network, api_key):
     to, as Twingate's Terraform provider resolves it; a POST would not survive
     that redirect. Any other final host, or a failed lookup, keeps the
     network's own host."""
+    network = network.lower()
     host = f"{network}.twingate.com"
-    r = call(module, f"https://{host}", headers={"X-API-KEY": api_key})
+    # The key goes to <network>.twingate.com only, never on to a redirect target.
+    r = call(module, f"https://{host}", headers={"X-API-KEY": api_key}, retry_5xx=False,
+             unredirected_headers=["X-API-KEY"])
     if r.status != -1:
-        final = urlparse(str(r.headers.get("url") or ""))
-        if final.scheme == "https" and final.hostname and final.hostname.startswith(network + ".") \
-                and final.hostname.endswith(".twingate.com"):
-            host = final.hostname
+        # The final host counts even if it answered with an error: it may
+        # simply refuse a bare GET.
+        final = urlparse(str(r.url or ""))
+        name = (final.hostname or "").lower()
+        if final.scheme == "https" and name.startswith(network + ".") and name.endswith(".twingate.com"):
+            host = name
     return f"https://{host}/api/graphql/"
 
 
@@ -320,14 +334,16 @@ class TwingateApi:
         except ValueError:
             out = None
         errors = out.get("errors") if isinstance(out, dict) else None
-        if errors:
+        if errors:  # refused before running: nothing was applied
             raise TwingateError("Twingate API: " + "; ".join(str(e.get("message", e)) for e in errors))
         if r.status != 200:
             detail = r.body[:300] if r.body else r.headers.get("msg", "")
-            raise TwingateError(f"Twingate API ({self.url}): HTTP {r.status} {detail}".rstrip())
+            raise TwingateError(f"Twingate API ({self.url}): HTTP {r.status} {detail}".rstrip(),
+                                unknown=write and (r.status == -1 or r.status >= 500))
         if not isinstance(out, dict) or not isinstance(out.get("data"), dict):
             raise TwingateError(f"Twingate API ({self.url}) answered with something that is not JSON from the "
-                                f"Admin API ({r.body[:120]!r}); if that is not your network's API, set api_url")
+                                f"Admin API ({r.body[:120]!r}); if that is not your network's API, set api_url",
+                                unknown=write)
         return out["data"]
 
     def query(self, text, variables=None):
@@ -354,9 +370,10 @@ class TwingateApi:
         remote network, in the shape plan() takes."""
         networks = self._pages(_NETWORKS, ("remoteNetworks",))
         groups = self._pages(_GROUPS, ("groups",))
-        resources = []
+        resources, others = [], {}
         for n in self._pages(_RESOURCES, ("resources",)):
-            if "id" not in n:  # Kubernetes, SSH, web app... resources: not ours
+            if n.get("__typename") != "NetworkResource":  # Kubernetes, SSH, web app: not ours
+                others[n["name"]] = n.get("__typename") or "resource"
                 continue
             access = n["access"]
             edges = list(access["edges"])
@@ -366,7 +383,8 @@ class TwingateApi:
                 edges += [{"node": x} for x in more]
             n["access"] = {"edges": edges}
             resources.append(n)
-        return {"resources": resources, "groups": _by_name(groups), "networks": _by_name(networks)}
+        return {"resources": resources, "others": others,
+                "groups": _by_name(groups), "networks": _by_name(networks)}
 
     def apply(self, op, variables):
         field = _MUTATIONS[op]
@@ -417,9 +435,11 @@ def reconcile(api, desired, default_remote_network, prune, check_mode, if_match=
             try:
                 api.apply(op, v)
             except TwingateError as e:
-                rest = [f"{_DONE[o]} {x.get('name') or names[x['id']]}" for o, x in p["ops"][i:]]
-                raise TwingateError(f"{e}. Done before the failure: {', '.join(done) or 'nothing'}. "
-                                    f"Not done: {', '.join(rest)}.")
+                this = f"{_DONE[op]} {v.get('name') or names[v['id']]}"
+                rest = [f"{_DONE[o]} {x.get('name') or names[x['id']]}" for o, x in p["ops"][i + 1:]]
+                failed = f"Outcome unknown (check the console): {this}." if e.unknown else f"Failed: {this}."
+                raise TwingateError(f"{e}. Done before the failure: {', '.join(done) or 'nothing'}. {failed} "
+                                    f"Not done: {', '.join(rest) or 'nothing'}.")
             done.append(f"{_DONE[op]} {v.get('name') or names[v['id']]}")
     return {
         "changed": bool(p["ops"]),

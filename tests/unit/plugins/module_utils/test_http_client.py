@@ -11,25 +11,34 @@ from ansible_collections.danielhreben.remote_access.plugins.module_utils import 
 
 
 class FakeResp:
-    def __init__(self, body):
-        self.body = body
+    def __init__(self, body, url):
+        self.body, self.url = body, url
 
     def read(self):
         return self.body
 
+    def geturl(self):
+        return self.url
+
 
 def scripted(*answers):
-    """A fake fetch_url answering (status, headers, body) in turn."""
+    """A fake fetch_url answering (status, headers, body) in turn. Like the real
+    one, an HTTP error comes back as an already-read response object (read()
+    gives b"") with the body in info["body"]; a connection error as None."""
     calls = []
 
     def fetch_url(module, url, **kw):
         calls.append(dict(url=url, **kw))
         status, headers, body = answers[min(len(calls), len(answers)) - 1]
+        final = headers.pop("final_url", url) if "final_url" in headers else url
         info = dict(headers, status=status, url=url)
+        if status == -1:
+            return None, info
         if 200 <= status < 300:
-            return FakeResp(body.encode()), info
+            info["url"] = final
+            return FakeResp(body.encode(), final), info
         info["body"] = body.encode()
-        return None, info
+        return FakeResp(b"", final), info
 
     return fetch_url, calls
 
@@ -95,9 +104,11 @@ def test_429_still_retried_when_retry_5xx_false(module):
     assert slept == [2]
 
 
-def test_connection_error_retried_only_for_reads(module):
-    r, calls, slept = run(module, [(-1, {"msg": "refused"}, ""), (-1, {}, ""), (200, {}, "ok")])
-    assert len(calls) == 3
+def test_connection_error_retried_once_and_only_for_reads(module):
+    r, calls, slept = run(module, [(-1, {"msg": "refused"}, ""), (200, {}, "ok")])
+    assert (len(calls), r.status, slept) == (2, 200, [2])
+    r, calls, slept = run(module, [(-1, {"msg": "refused"}, "")])
+    assert (len(calls), r.status) == (2, -1)
     r, calls, slept = run(module, [(-1, {"msg": "refused"}, ""), (200, {}, "ok")], retry_5xx=False)
     assert len(calls) == 1
     assert r.status == -1
@@ -114,3 +125,26 @@ def test_gives_up_after_five_tries(module):
 def test_passes_method_data_and_headers(module):
     r, calls, slept = run(module, [(200, {}, "")], method="POST", data="{}", headers={"A": "b"})
     assert (calls[0]["method"], calls[0]["data"], calls[0]["headers"]) == ("POST", "{}", {"A": "b"})
+
+
+def test_error_body_comes_from_info(module):
+    # fetch_url hands back the (already read) HTTPError as the response.
+    r, calls, slept = run(module, [(400, {}, '{"message": "invalid policy"}')], retry_5xx=False)
+    assert (r.status, r.body) == (400, '{"message": "invalid policy"}')
+
+
+def test_final_url_after_redirects_even_on_an_error(module):
+    r, calls, slept = run(module, [(401, {"final_url": "https://acme.eu1.example.com/"}, "")], retry_5xx=False)
+    assert r.url == "https://acme.eu1.example.com/"
+    r, calls, slept = run(module, [(200, {"final_url": "https://acme.eu1.example.com/x"}, "")])
+    assert r.url == "https://acme.eu1.example.com/x"
+
+
+def test_url_of_a_connection_error_is_the_request_url(module):
+    r, calls, slept = run(module, [(-1, {}, "")], retry_5xx=False)
+    assert r.url == "https://api.example.com/x"
+
+
+def test_unredirected_headers_are_passed_on(module):
+    r, calls, slept = run(module, [(200, {}, "")], unredirected_headers=["X-API-KEY"])
+    assert calls[0]["unredirected_headers"] == ["X-API-KEY"]

@@ -42,6 +42,8 @@ notes:
   - Twingate limits API requests (60 reads and 20 writes a minute by default).
     Requests answered with HTTP 429 are retried, waiting as long as the API asks
     (at most 120 seconds, at most 5 tries). Reads are also retried on HTTP 502,
-    503 and 504 and on connection errors; a change is never retried after a
-    server error, since it may have been applied.
+    503 and 504, and once after a connection error; a change is never retried
+    after a server error, since it may have been applied.
+  - The API key is sent only to the network's own host. The lookup of a
+    regional host does not pass it on to wherever that host redirects.
 """
