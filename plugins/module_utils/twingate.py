@@ -12,9 +12,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from urllib.parse import urlparse
 
+from ansible.module_utils.basic import env_fallback
+
 from ansible_collections.danielhreben.remote_access.plugins.module_utils.http_client import call
+
+# The connection options every Twingate module takes (doc fragment: twingate).
+ARGUMENT_SPEC = dict(
+    network=dict(type="str", fallback=(env_fallback, ["TWINGATE_NETWORK"])),
+    api_key=dict(type="str", required=True, no_log=True, fallback=(env_fallback, ["TWINGATE_API_KEY"])),
+    api_url=dict(type="str"),
+    validate_certs=dict(type="bool", default=True),
+    timeout=dict(type="int", default=30),
+)
+REQUIRED_ONE_OF = [("network", "api_url")]
 
 FIELDS = ("address", "alias", "remote_network", "tcp", "udp", "icmp", "visible", "browser_shortcut", "groups")
 
@@ -363,3 +376,59 @@ class TwingateApi:
         if not r or not r.get("ok"):
             what = variables.get("name") or variables.get("id")
             raise TwingateError(f"{field} {what}: {(r or {}).get('error') or 'refused'}")
+
+
+def connect(module):
+    """A TwingateApi for the module's connection options."""
+    p = module.params
+    url = p["api_url"]
+    if not url:
+        if not p["network"]:
+            raise TwingateError("one of the following is required: network, api_url")
+        if not re.match(r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$", p["network"]):
+            raise TwingateError(f"network {p['network']!r} is not a network name (the acme in acme.twingate.com)")
+        url = resolve_api_url(module, p["network"], p["api_key"])
+    return TwingateApi(module, url, p["api_key"])
+
+
+def _dump(d):
+    if not d:
+        return ""
+    try:
+        import yaml
+    except ImportError:
+        return json.dumps(d, indent=2) + "\n"
+    return yaml.safe_dump(d, sort_keys=False, default_flow_style=None, width=120)
+
+
+_DONE = {"create": "created", "update": "updated", "delete": "deleted"}
+
+
+def reconcile(api, desired, default_remote_network, prune, check_mode, if_match=None):
+    """Read, plan, and (unless check_mode) apply. The module's result."""
+    st = api.read_state()
+    p = plan(st, desired, default_remote_network, prune)
+    if if_match and p["fingerprint"] != if_match:
+        raise TwingateError("the console's resources changed since the check; run the check again")
+    if p["ops"] and not check_mode:
+        names = {n["id"]: n["name"] for n in st["resources"]}
+        done = []
+        for i, (op, v) in enumerate(p["ops"]):
+            try:
+                api.apply(op, v)
+            except TwingateError as e:
+                rest = [f"{_DONE[o]} {x.get('name') or names[x['id']]}" for o, x in p["ops"][i:]]
+                raise TwingateError(f"{e}. Done before the failure: {', '.join(done) or 'nothing'}. "
+                                    f"Not done: {', '.join(rest)}.")
+            done.append(f"{_DONE[op]} {v.get('name') or names[v['id']]}")
+    return {
+        "changed": bool(p["ops"]),
+        "fingerprint": p["fingerprint"],
+        "unmanaged": p["unmanaged"],
+        "created": p["created"],
+        "updated": p["updated"],
+        "deleted": p["deleted"],
+        "resources": p["resources"],
+        "diff": {"before": _dump(p["before"]), "after": _dump(p["after"]),
+                 "before_header": "twingate (live)", "after_header": "desired"},
+    }
