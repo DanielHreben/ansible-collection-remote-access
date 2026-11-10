@@ -1,0 +1,58 @@
+---
+# Push a tag vX.Y.Z (matching galaxy.yml) to test, build, publish to Galaxy
+# and make a GitHub release. Needs the repository secret GALAXY_API_KEY.
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+jobs:
+  test:
+    name: ${{ matrix.test }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        test: [sanity, units]
+    steps:
+      - uses: ansible-community/ansible-test-gh-action@6ded727edb598e670ac056a8e680ca4050bac0a3  # v1.18.0
+        with:
+          ansible-core-version: stable-2.21
+          testing-type: ${{ matrix.test }}
+          coverage: never
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.13"
+      - name: Install ansible-core
+        run: python -m pip install "ansible-core>=2.21,<2.22"
+      - name: Check the tag matches galaxy.yml
+        run: |
+          version=$(python -c 'import yaml; print(yaml.safe_load(open("galaxy.yml"))["version"])')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match galaxy.yml version $version"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build
+        run: ansible-galaxy collection build
+      - name: Publish to Galaxy
+        env:
+          GALAXY_API_KEY: ${{ secrets.GALAXY_API_KEY }}
+        run: ansible-galaxy collection publish "danielhreben-remote_access-$VERSION.tar.gz" --api-key "$GALAXY_API_KEY"
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awk -v v="$VERSION" '$0 ~ "^## \\[" v "\\]" {on=1; next} on && /^## \[/ {exit} on' CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" "danielhreben-remote_access-$VERSION.tar.gz" \
+            --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag

@@ -1,0 +1,36 @@
+---
+# Keep a tailnet's policy file equal to tailnet-policy.hujson.
+#   TAILSCALE_API_KEY=tskey-api-... ansible-playbook examples/tailscale_policy.yml
+#   or TAILSCALE_OAUTH_CLIENT_ID=... TAILSCALE_OAUTH_CLIENT_SECRET=tskey-client-... (policy_file scope)
+# Tailscale validates the policy (and runs its tests), the diff is shown, you
+# confirm, and it uploads only if the live policy is still the one shown.
+- name: Tailnet policy
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Compare the live policy with tailnet-policy.hujson
+      danielhreben.remote_access.tailscale_policy:
+        src: "{{ playbook_dir }}/tailnet-policy.hujson"
+      check_mode: true
+      diff: true
+      register: plan
+
+    - name: Nothing to upload
+      ansible.builtin.meta: end_play
+      when: not plan.changed or ansible_check_mode
+
+    - name: Confirm
+      ansible.builtin.pause:
+        prompt: "Upload this policy? Type yes"
+      register: answer
+
+    - name: Stop unless confirmed
+      ansible.builtin.fail:
+        msg: Not uploaded.
+      when: answer.user_input != 'yes'
+
+    - name: Upload, only if the live policy is still the one compared
+      danielhreben.remote_access.tailscale_policy:
+        src: "{{ playbook_dir }}/tailnet-policy.hujson"
+        if_match: "{{ plan.etag }}"

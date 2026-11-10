@@ -20,10 +20,10 @@ description:
   - Returns RV(fingerprint), a hash of the live resources. Pass the fingerprint
     of a check-mode run as O(if_match) to refuse an apply when the console
     changed after the check (see the examples).
-  - Not managed, and left as they are: groups and their members, users,
+  - Left as they are, and not managed, are groups and their members, users,
     connectors, remote networks, security policies, service accounts' access,
-    and these resource settings - security policy, tags, approval mode, routing
-    mode, access policy, active state and per-group access settings. A new
+    and these resource settings (security policy, tags, approval mode, routing
+    mode, access policy, active state and per-group access settings). A new
     resource gets Twingate's defaults for them.
   - Only network resources are handled. Kubernetes, SSH and web app resources
     are ignored entirely.
@@ -110,6 +110,7 @@ options:
 seealso:
   - module: danielhreben.remote_access.twingate_resource_info
   - name: Twingate Admin API
+    description: API keys, permissions and rate limits.
     link: https://www.twingate.com/docs/api-overview
 """
 

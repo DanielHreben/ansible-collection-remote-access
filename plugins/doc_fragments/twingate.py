@@ -38,7 +38,7 @@ options:
     default: 30
 notes:
   - The module talks to the Twingate Admin API from the host it runs on, usually
-    the controller (C(delegate_to: localhost) or a play on C(localhost)).
+    the controller (a task with C(delegate_to) set to C(localhost), or a play on C(localhost)).
   - Twingate limits API requests (60 reads and 20 writes a minute by default).
     Requests answered with HTTP 429 are retried, waiting as long as the API asks
     (at most 120 seconds, at most 5 tries). Reads are also retried on HTTP 502,

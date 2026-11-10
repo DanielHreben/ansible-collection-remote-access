@@ -1,0 +1,70 @@
+---
+# Keep a Twingate network's resources equal to twingate-resources.yml.
+#   TWINGATE_API_KEY=... ansible-playbook examples/twingate.yml --diff
+#   ... -e prune=true     also delete resources that are not in the file
+#   ... -e export=true    write the network's current resources into the file
+# Shows the diff, asks, then applies only if the console is still as it showed.
+- name: Twingate resources
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    twingate_network: example
+    twingate_remote_network: Office
+    resources_file: "{{ playbook_dir }}/twingate-resources.yml"
+  tasks:
+    - name: Export the network's resources
+      when: export | default(false) | bool
+      block:
+        - name: Read the resources
+          danielhreben.remote_access.twingate_resource_info:
+            network: "{{ twingate_network }}"
+            remote_network: "{{ twingate_remote_network }}"
+          register: live
+
+        - name: Write twingate-resources.yml
+          ansible.builtin.copy:
+            dest: "{{ resources_file }}"
+            mode: "0644"
+            content: "{{ {'twingate_resources': live.resources} | to_nice_yaml(sort_keys=false) }}"
+
+        - name: Exported
+          ansible.builtin.meta: end_play
+
+    - name: Read twingate-resources.yml
+      ansible.builtin.include_vars:
+        file: "{{ resources_file }}"
+
+    - name: Compare Twingate with the file
+      danielhreben.remote_access.twingate_resources: &resources
+        network: "{{ twingate_network }}"
+        remote_network: "{{ twingate_remote_network }}"
+        resources: "{{ twingate_resources }}"
+        prune: "{{ prune | default(false) | bool }}"
+      check_mode: true
+      diff: true
+      register: plan
+
+    - name: Resources only in Twingate (kept; -e prune=true deletes them)
+      ansible.builtin.debug:
+        var: plan.unmanaged
+      when: plan.unmanaged | length > 0
+
+    - name: Nothing to change
+      ansible.builtin.meta: end_play
+      when: not plan.changed or ansible_check_mode
+
+    - name: Confirm
+      ansible.builtin.pause:
+        prompt: "Apply these changes to Twingate? Type yes"
+      register: answer
+
+    - name: Stop unless confirmed
+      ansible.builtin.fail:
+        msg: Nothing changed.
+      when: answer.user_input != 'yes'
+
+    - name: Apply, only if the console is still as compared
+      danielhreben.remote_access.twingate_resources:
+        <<: *resources
+        if_match: "{{ plan.fingerprint }}"

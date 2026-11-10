@@ -1,0 +1,30 @@
+---
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, to hear about new ansible-core releases breaking something.
+    - cron: "17 6 * * 1"
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    name: ${{ matrix.test }} (ansible-core ${{ matrix.ansible }})
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.ansible == 'devel' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        ansible: [stable-2.19, stable-2.20, stable-2.21, devel]
+        test: [sanity, units]
+    steps:
+      - uses: ansible-community/ansible-test-gh-action@6ded727edb598e670ac056a8e680ca4050bac0a3  # v1.18.0
+        with:
+          ansible-core-version: ${{ matrix.ansible }}
+          testing-type: ${{ matrix.test }}
+          coverage: never

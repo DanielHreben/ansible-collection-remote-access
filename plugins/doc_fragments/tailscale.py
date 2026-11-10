@@ -45,7 +45,8 @@ options:
     default: 30
 notes:
   - The module talks to the Tailscale API from the host it runs on, usually the
-    controller (C(delegate_to: localhost) or a play on C(localhost)).
+    controller (a task with C(delegate_to) set to C(localhost), or a play on
+    C(localhost)).
   - Requests answered with HTTP 429 are retried, waiting as long as the API asks
     (at most 120 seconds, at most 5 tries). Reads are also retried on HTTP 502,
     503 and 504 and on connection errors. An upload is never retried after a

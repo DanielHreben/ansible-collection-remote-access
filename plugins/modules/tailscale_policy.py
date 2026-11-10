@@ -22,7 +22,7 @@ description:
     the console in between fails the run instead of being overwritten. Pass the
     RV(etag) of a check-mode run as O(if_match) to stretch that protection over a
     whole check-then-apply sequence (see the examples).
-  - The whole policy file is replaced: a mistake affects every device in the
+  - The whole policy file is replaced, so a mistake affects every device in the
     tailnet. Put C(tests) in the policy; Tailscale refuses a policy whose tests
     fail, and this module stops before uploading it.
 extends_documentation_fragment:
@@ -55,6 +55,7 @@ options:
     type: str
 seealso:
   - name: Tailscale policy file syntax
+    description: What a policy file can hold, including C(tests).
     link: https://tailscale.com/kb/1337/policy-syntax
   - name: Tailscale OAuth clients
     description: An OAuth client needs the C(policy_file) scope.
