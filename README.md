@@ -110,10 +110,12 @@ mode, access policy, active state and per-group access settings. Kubernetes, SSH
 web app resources are ignored, and listing a name that belongs to one of them is an
 error.
 
-> **Status (0.1.0):** reading, comparing and exporting have been checked against a live
-> Twingate network. Creating, updating and deleting resources have been tested against
-> faked API answers only, with every query and mutation validated against Twingate's published
-> GraphQL schema. Run a change in check mode first, and please
+> **Tested live (0.1.1):** against a real Twingate network: reading, comparing, exporting,
+> and a resource created, updated (ports and ranges, `all`, UDP, ICMP, adding and removing
+> a group) and deleted with `prune`. Aliases, browser shortcuts and moving a resource to
+> another remote network have run against faked API answers only. Every query and mutation
+> is also validated against Twingate's published GraphQL schema. Run a change in check mode
+> first, and please
 > [open an issue](https://github.com/DanielHreben/ansible-collection-remote-access/issues)
 > if one fails.
 

@@ -3,6 +3,18 @@
 All notable changes to `danielhreben.remote_access`. Versions follow
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] - 2026-11-10
+
+Documentation only; the code is the same as 0.1.0.
+
+### Changed
+
+- Every kind of write has now run against a live service: a Twingate resource created,
+  updated (ports and ranges, `all`, UDP, ICMP, adding and removing a group) and deleted
+  with `prune`, and a Tailscale policy file uploaded. The "faked API answers only" note
+  now covers just aliases, browser shortcuts and moving a resource to another remote
+  network.
+
 ## [0.1.0] - 2026-11-10
 
 First release.

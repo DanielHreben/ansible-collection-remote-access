@@ -1,7 +1,7 @@
 ---
 namespace: danielhreben
 name: remote_access
-version: 0.1.0
+version: 0.1.1
 readme: README.md
 authors:
   - Daniel Hreben (@DanielHreben)

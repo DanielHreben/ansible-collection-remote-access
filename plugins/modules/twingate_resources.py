@@ -30,10 +30,11 @@ description:
   - If a change fails partway, the error lists the changes already made, the
     one that failed (or whose outcome is unknown, after a server error or a
     lost connection), and those not attempted.
-  - B(As of 0.1.0, creating, updating and deleting resources has been tested
-    against faked API answers only), with every query and mutation validated against
-    Twingate's published GraphQL schema. Reading, comparing and exporting have
-    been checked against a live network. Try a change in check mode first.
+  - Creating, updating and deleting resources have run against a live network
+    (as of 0.1.1). Aliases, browser shortcuts and moving a resource to another
+    remote network have been tested against faked API answers only. Every query
+    and mutation is validated against Twingate's published GraphQL schema. Try a
+    change in check mode first.
 extends_documentation_fragment:
   - danielhreben.remote_access.twingate
   - ansible.builtin.action_common_attributes
