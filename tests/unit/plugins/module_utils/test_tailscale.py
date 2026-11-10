@@ -10,7 +10,7 @@ import pytest
 
 from ansible_collections.danielhreben.remote_access.plugins.module_utils import tailscale as tp
 
-POLICY = '// home\n{\n\t"grants": [],\n}\n'
+POLICY = '// example\n{\n\t"grants": [],\n}\n'
 
 
 class FakeApi:
@@ -52,8 +52,8 @@ class TestReconcile:
 
     def test_tailscales_reformatting_is_not_a_change(self):
         # Tailscale reformats the file on save: wraps lists, realigns columns.
-        mine = '// home\n{\n\t"a":  ["x", "y"], // two\n\t"b": 1,\n}\n'
-        theirs = '// home\n{\n\t"a": [\n\t\t"x",\n\t\t"y",\n\t], // two\n\t"b": 1,\n}\n'
+        mine = '// example\n{\n\t"a":  ["x", "y"], // two\n\t"b": 1,\n}\n'
+        theirs = '// example\n{\n\t"a": [\n\t\t"x",\n\t\t"y",\n\t], // two\n\t"b": 1,\n}\n'
         api = FakeApi(live=theirs)
         r = tp.reconcile(api, mine, check_mode=False)
         assert not r["changed"]
@@ -61,7 +61,7 @@ class TestReconcile:
         assert ("post", '"e1"') not in api.calls
 
     def test_a_comment_change_is_a_change(self):
-        r = tp.reconcile(FakeApi(), POLICY.replace("// home", "// house"), check_mode=True)
+        r = tp.reconcile(FakeApi(), POLICY.replace("// example", "// changed"), check_mode=True)
         assert r["changed"]
 
     def test_a_value_change_is_a_change(self):

@@ -111,8 +111,8 @@ web app resources are ignored, and listing a name that belongs to one of them is
 error.
 
 > **Status (0.1.0):** reading, comparing and exporting have been checked against a live
-> Twingate network. Creating and updating resources have been tested against faked API
-> answers only, with every query and mutation validated against Twingate's published
+> Twingate network. Creating, updating and deleting resources have been tested against
+> faked API answers only, with every query and mutation validated against Twingate's published
 > GraphQL schema. Run a change in check mode first, and please
 > [open an issue](https://github.com/DanielHreben/ansible-collection-remote-access/issues)
 > if one fails.

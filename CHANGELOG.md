@@ -18,4 +18,4 @@ First release.
 
 ### Known limitations
 
-- Twingate create and update are tested against faked API answers only.
+- Twingate create, update and delete are tested against faked API answers only.

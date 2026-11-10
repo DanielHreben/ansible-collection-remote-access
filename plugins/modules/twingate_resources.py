@@ -30,8 +30,8 @@ description:
   - If a change fails partway, the error lists the changes already made, the
     one that failed (or whose outcome is unknown, after a server error or a
     lost connection), and those not attempted.
-  - B(As of 0.1.0, creating and updating resources has been tested against
-    faked API answers only), with every query and mutation validated against
+  - B(As of 0.1.0, creating, updating and deleting resources has been tested
+    against faked API answers only), with every query and mutation validated against
     Twingate's published GraphQL schema. Reading, comparing and exporting have
     been checked against a live network. Try a change in check mode first.
 extends_documentation_fragment:
