@@ -49,9 +49,10 @@ def _wait(headers, attempt):
     return max(0, min(seconds, MAX_WAIT))
 
 
-def call(module, url, method="GET", data=None, headers=None, retry_5xx=True, sleep=time.sleep):
+def call(module, url, method="GET", data=None, headers=None, retry_5xx=True, sleep=None):
     """Send one request, retrying as described above. Never raises for an HTTP
     status: the caller reads ``Response.status``."""
+    sleep = sleep or time.sleep
     attempt = 0
     while True:
         resp, info = fetch_url(module, url, data=data, headers=headers, method=method,

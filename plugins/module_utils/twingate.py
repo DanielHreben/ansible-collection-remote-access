@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from urllib.parse import urlparse
+
+from ansible_collections.danielhreben.remote_access.plugins.module_utils.http_client import call
 
 FIELDS = ("address", "alias", "remote_network", "tcp", "udp", "icmp", "visible", "browser_shortcut", "groups")
 
@@ -238,3 +241,125 @@ def plan(state, desired, default_remote_network, prune):
     out["fingerprint"] = fingerprint(list(have.values()))
     out["resources"] = [short(have[n], default_remote_network) for n in names]
     return out
+
+
+# --- The Admin API -----------------------------------------------------------
+
+PAGE = 50
+
+_PAGE_INFO = "pageInfo { endCursor hasNextPage }"
+_GROUP_PRINCIPAL = "edges { node { __typename ... on Group { id name } } }"
+_NETWORKS = "query($first: Int!, $after: String) { remoteNetworks(first: $first, after: $after) { %s edges { node { id name } } } }" % _PAGE_INFO
+_GROUPS = "query($first: Int!, $after: String) { groups(first: $first, after: $after) { %s edges { node { id name } } } }" % _PAGE_INFO
+_RESOURCES = (
+    "query($first: Int!, $after: String) { resources(first: $first, after: $after) { %s edges { node {"
+    " __typename ... on NetworkResource {"
+    " id name alias isVisible isBrowserShortcutEnabled address { value } remoteNetwork { id name }"
+    " protocols { allowIcmp tcp { policy ports { start end } } udp { policy ports { start end } } }"
+    " access(first: $first) { %s %s } } } } } }" % (_PAGE_INFO, _PAGE_INFO, _GROUP_PRINCIPAL))
+_MORE_ACCESS = (
+    "query($id: ID!, $first: Int!, $after: String) { resource(id: $id) { ... on NetworkResource {"
+    " access(first: $first, after: $after) { %s %s } } } }" % (_PAGE_INFO, _GROUP_PRINCIPAL))
+
+# GraphQL variable types, strictest form: a non-null variable is accepted
+# wherever the schema allows null too. A None value drops the "!".
+_TYPES = {
+    "id": "ID!", "name": "String!", "address": "String!", "alias": "String!", "remoteNetworkId": "ID!",
+    "protocols": "ProtocolsInput!", "groupIds": "[ID!]!", "addedGroupIds": "[ID!]!", "removedGroupIds": "[ID!]!",
+    "isVisible": "Boolean!", "isBrowserShortcutEnabled": "Boolean!",
+}
+_MUTATIONS = {"create": "resourceCreate", "update": "resourceUpdate", "delete": "resourceDelete"}
+
+
+def resolve_api_url(module, network, api_key):
+    """The GraphQL URL for a network. Some networks are served from a regional
+    host (<network>.<region>.twingate.com) that <network>.twingate.com redirects
+    to, as Twingate's Terraform provider resolves it; a POST would not survive
+    that redirect. Any other final host, or a failed lookup, keeps the
+    network's own host."""
+    host = f"{network}.twingate.com"
+    r = call(module, f"https://{host}", headers={"X-API-KEY": api_key})
+    if r.status != -1:
+        final = urlparse(str(r.headers.get("url") or ""))
+        if final.scheme == "https" and final.hostname and final.hostname.startswith(network + ".") \
+                and final.hostname.endswith(".twingate.com"):
+            host = final.hostname
+    return f"https://{host}/api/graphql/"
+
+
+def _by_name(nodes):
+    out = {}
+    for n in nodes:
+        out.setdefault(n["name"], []).append(n["id"])
+    return out
+
+
+class TwingateApi:
+    def __init__(self, module, api_url, api_key):
+        self.module, self.url, self.key = module, api_url, api_key
+
+    def _post(self, text, variables, write):
+        body = json.dumps({"query": text, "variables": variables or {}})
+        r = call(self.module, self.url, method="POST", data=body, retry_5xx=not write,
+                 headers={"X-API-KEY": self.key, "Content-Type": "application/json", "Accept": "application/json"})
+        try:
+            out = json.loads(r.body) if r.body else None
+        except ValueError:
+            out = None
+        errors = out.get("errors") if isinstance(out, dict) else None
+        if errors:
+            raise TwingateError("Twingate API: " + "; ".join(str(e.get("message", e)) for e in errors))
+        if r.status != 200:
+            detail = r.body[:300] if r.body else r.headers.get("msg", "")
+            raise TwingateError(f"Twingate API ({self.url}): HTTP {r.status} {detail}".rstrip())
+        if not isinstance(out, dict) or not isinstance(out.get("data"), dict):
+            raise TwingateError(f"Twingate API ({self.url}) answered with something that is not JSON from the "
+                                f"Admin API ({r.body[:120]!r}); if that is not your network's API, set api_url")
+        return out["data"]
+
+    def query(self, text, variables=None):
+        return self._post(text, variables, write=False)
+
+    def _pages(self, text, path, variables=None, after=None):
+        nodes = []
+        while True:
+            conn = self.query(text, dict(variables or {}, first=PAGE, after=after))
+            for key in path:
+                conn = (conn or {}).get(key)
+            if conn is None:
+                raise TwingateError(f"Twingate API: no {'.'.join(path)} in the answer")
+            nodes += [e["node"] for e in conn["edges"]]
+            info = conn["pageInfo"]
+            if not info["hasNextPage"]:
+                return nodes
+            if not info.get("endCursor") or info["endCursor"] == after:
+                raise TwingateError(f"Twingate API: {'.'.join(path)} has more pages but no new cursor")
+            after = info["endCursor"]
+
+    def read_state(self):
+        """Every network resource (with all its access entries), group and
+        remote network, in the shape plan() takes."""
+        networks = self._pages(_NETWORKS, ("remoteNetworks",))
+        groups = self._pages(_GROUPS, ("groups",))
+        resources = []
+        for n in self._pages(_RESOURCES, ("resources",)):
+            if "id" not in n:  # Kubernetes, SSH, web app... resources: not ours
+                continue
+            access = n["access"]
+            edges = list(access["edges"])
+            if access["pageInfo"]["hasNextPage"]:
+                more = self._pages(_MORE_ACCESS, ("resource", "access"), {"id": n["id"]},
+                                   after=access["pageInfo"]["endCursor"])
+                edges += [{"node": x} for x in more]
+            n["access"] = {"edges": edges}
+            resources.append(n)
+        return {"resources": resources, "groups": _by_name(groups), "networks": _by_name(networks)}
+
+    def apply(self, op, variables):
+        field = _MUTATIONS[op]
+        decl = ", ".join(f"${k}: {_TYPES[k].rstrip('!') if v is None else _TYPES[k]}" for k, v in variables.items())
+        args = ", ".join(f"{k}: ${k}" for k in variables)
+        r = self._post(f"mutation({decl}) {{ r: {field}({args}) {{ ok error }} }}", variables, write=True)["r"]
+        if not r or not r.get("ok"):
+            what = variables.get("name") or variables.get("id")
+            raise TwingateError(f"{field} {what}: {(r or {}).get('error') or 'refused'}")
